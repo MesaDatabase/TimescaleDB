@@ -1,0 +1,18 @@
+--decompress one specific chunk
+SELECT decompress_chunk('_timescaledb_internal._hyper_1_1_chunk');
+
+
+--decompress all compressed chunks in a hypertable
+DO $$ 
+DECLARE 
+    chunk RECORD;
+BEGIN
+    FOR chunk IN 
+        SELECT format('_timescaledb_internal.%I', chunk_name) AS chunk_name
+        FROM timescaledb_information.chunks 
+        WHERE hypertable_name = 'pointchanges' 
+        AND is_compressed = TRUE
+    LOOP
+        EXECUTE format('SELECT decompress_chunk(%L)', chunk.chunk_name);
+    END LOOP;
+END $$;

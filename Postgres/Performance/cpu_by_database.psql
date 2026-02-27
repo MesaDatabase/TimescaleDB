@@ -1,0 +1,19 @@
+WITH DB_CPU_Stats AS (
+  SELECT 
+    datname AS DatabaseName,
+    SUM(blk_read_time + blk_write_time) AS CPU_Time_Ms
+  FROM pg_stat_database
+  WHERE datname NOT IN ('template0', 'template1') -- Exclude system databases
+  GROUP BY datname
+)
+SELECT 
+  ROW_NUMBER() OVER (ORDER BY CPU_Time_Ms DESC) AS row_num,
+  DatabaseName,
+  CPU_Time_Ms,
+  CASE 
+    WHEN SUM(CPU_Time_Ms) OVER () > 0 
+    THEN CAST(CPU_Time_Ms * 100.0 / NULLIF(SUM(CPU_Time_Ms) OVER (), 0) AS DECIMAL(5,2))
+    ELSE 0
+  END AS CPUPercent
+FROM DB_CPU_Stats
+ORDER BY row_num;

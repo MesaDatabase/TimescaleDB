@@ -1,0 +1,74 @@
+--list of all indexes
+SELECT
+    t.relname AS table_name,
+    i.relname AS index_name,
+    pg_get_indexdef(ix.indexrelid) AS index_definition
+FROM pg_index ix
+JOIN pg_class t
+  ON t.oid = ix.indrelid
+JOIN pg_class i
+  ON i.oid = ix.indexrelid
+JOIN pg_namespace n
+  ON n.oid = t.relnamespace
+WHERE n.nspname = 'public'
+ORDER BY t.relname, i.relname;
+
+
+--tables without primary keys
+SELECT n.nspname AS schema_name,
+       c.relname AS table_name
+FROM pg_class c
+JOIN pg_namespace n ON c.relnamespace = n.oid
+LEFT JOIN pg_constraint con ON con.conrelid = c.oid AND con.contype IN ('p', 'u')
+WHERE c.relkind = 'r' -- Only tables
+  AND con.oid IS NULL
+  AND n.nspname = 'public'
+ORDER BY schema_name, table_name;
+
+--indexes that have never been used
+SELECT 
+    schemaname, 
+    relname AS table_name, 
+    indexrelname AS index_name,
+    idx_scan AS times_used,
+    idx_tup_read AS tuples_read,
+    idx_tup_fetch AS tuples_fetched,
+    pg_size_pretty(pg_relation_size(indexrelid)) AS index_size
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0  -- Never used
+AND schemaname = 'public'
+ORDER BY pg_relation_size(indexrelid) DESC;
+
+--missing indexes (no Postgres equivalent, so manually adjust sequential scan threshold)
+SELECT relname AS table_name,
+       seq_scan,
+       seq_tup_read,
+       pg_size_pretty(pg_table_size(relid)) AS table_size
+FROM pg_stat_user_tables
+WHERE seq_scan > 1000 -- Threshold for excessive sequential scans
+ORDER BY seq_scan DESC;
+
+
+--index bloat (fragmentation)
+SELECT 
+    schemaname,
+    relname AS table_name,
+    indexrelname AS index_name,
+    pg_size_pretty(pg_relation_size(indexrelid)) AS index_size,
+    100 * (pg_relation_size(indexrelid) - pg_total_relation_size(indexrelid)::NUMERIC) / pg_relation_size(indexrelid) AS bloat_ratio
+FROM pg_stat_user_indexes
+ORDER BY bloat_ratio DESC
+LIMIT 10;
+
+--table statistics
+SELECT 
+    schemaname, 
+    relname AS table_name, 
+    last_vacuum, 
+    last_autovacuum, 
+    last_analyze, 
+    last_autoanalyze
+FROM pg_stat_all_tables
+WHERE last_analyze IS NOT NULL
+ORDER BY last_analyze DESC;
+

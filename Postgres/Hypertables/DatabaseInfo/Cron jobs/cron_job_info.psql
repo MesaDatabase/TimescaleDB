@@ -1,0 +1,23 @@
+-- See scheduled cron jobs
+SELECT jobid, jobname, schedule, database, command, active
+FROM cron.job
+ORDER BY jobname;
+
+-- see Cron job history
+SELECT *
+FROM cron.job_run_details
+ORDER BY start_time DESC
+LIMIT 500;
+
+-- see the most recent run per cron job
+SELECT DISTINCT ON (jobid)
+    jobid,
+    jobname,
+    database,
+    status,
+    run_duration,
+    start_time,
+    return_message
+FROM cron.job_run_details
+ORDER BY jobid, start_time DESC;
+

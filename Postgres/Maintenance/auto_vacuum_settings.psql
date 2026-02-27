@@ -1,0 +1,30 @@
+--specifically for public schema tables that are not hyper tables
+--these settings should be applied per table to the Timescale.psql schema in future sprints
+
+ALTER TABLE public.your_large_table SET (
+    autovacuum_vacuum_threshold = 500000, -- Large threshold to avoid unnecessary runs
+    autovacuum_vacuum_scale_factor = 0.02, -- 2% of table changes trigger vacuum
+    autovacuum_analyze_threshold = 100000, -- Analyze threshold
+    autovacuum_analyze_scale_factor = 0.01, -- 1% of table changes before analyze
+    autovacuum_vacuum_cost_limit = 8000, -- Higher cost limit to clean up faster
+    autovacuum_vacuum_cost_delay = 5  -- Minimal delay for better efficiency
+);
+
+ALTER TABLE public.your_medium_table SET (
+    autovacuum_vacuum_threshold = 10000, -- Medium threshold
+    autovacuum_vacuum_scale_factor = 0.05, -- 5% of table changes before vacuum
+    autovacuum_analyze_threshold = 5000, -- Analyze threshold
+    autovacuum_analyze_scale_factor = 0.02, -- 2% of table changes before analyze
+    autovacuum_vacuum_cost_limit = 4000, -- Balanced vacuum cost limit
+    autovacuum_vacuum_cost_delay = 10  -- Slightly aggressive vacuuming
+);
+
+
+ALTER TABLE public.your_small_table SET (
+    autovacuum_vacuum_threshold = 500,  -- Lower threshold for small tables
+    autovacuum_vacuum_scale_factor = 0.1,  -- 10% changes trigger vacuum
+    autovacuum_analyze_threshold = 250,  -- Lower analyze threshold
+    autovacuum_analyze_scale_factor = 0.05,  -- 5% changes trigger analyze
+    autovacuum_vacuum_cost_limit = 2000,  -- Lower vacuum cost to reduce impact
+    autovacuum_vacuum_cost_delay = 20     -- Slower to avoid locking
+);

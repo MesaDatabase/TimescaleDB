@@ -1,0 +1,5 @@
+--List current connections
+SELECT pid, usename, application_name, client_addr, state, backend_start, query
+FROM pg_stat_activity
+--WHERE datname = 'fdw_test'
+ORDER BY backend_start;

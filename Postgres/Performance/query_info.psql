@@ -1,0 +1,30 @@
+--long running queries
+SELECT pid,
+       age(clock_timestamp(), query_start) AS runtime,
+       state,
+       wait_event,
+       substring(query, 1, 100) AS short_query
+FROM pg_stat_activity
+WHERE state != 'idle'
+ORDER BY runtime DESC
+LIMIT 10;
+
+--high cpu queries
+SELECT pid,
+       total_exec_time AS total_time,
+       calls,
+       mean_exec_time AS avg_time,
+       substring(query, 1, 100) AS short_query
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 10;
+
+--high disk i/o queries
+SELECT pid,
+       temp_blks_read + temp_blks_written AS total_temp_blocks,
+       substring(query, 1, 100) AS short_query
+FROM pg_stat_activity
+WHERE temp_blks_read + temp_blks_written > 0
+ORDER BY total_temp_blocks DESC
+LIMIT 10;
+

@@ -1,0 +1,81 @@
+-- List hypertables & their cumulative sizes
+WITH chunk_sizes AS (
+    SELECT 
+        ht.table_name AS hypertable_name,
+        SUM(
+            CASE 
+                WHEN uc.compressed_chunk_id IS NOT NULL 
+                THEN pg_total_relation_size(format('%I.%I', '_timescaledb_internal', cc.table_name)::regclass) 
+                ELSE pg_total_relation_size(format('%I.%I', '_timescaledb_internal', uc.table_name)::regclass) 
+            END
+        ) AS total_size
+    FROM _timescaledb_catalog.chunk uc
+    LEFT JOIN _timescaledb_catalog.chunk cc 
+        ON uc.compressed_chunk_id = cc.id
+    JOIN _timescaledb_catalog.hypertable ht 
+        ON uc.hypertable_id = ht.id
+    GROUP BY ht.table_name
+)
+SELECT 
+    h.hypertable_schema, 
+    h.hypertable_name, 
+    h.num_dimensions, 
+    h.num_chunks, 
+    h.compression_enabled, 
+    pg_size_pretty(cs.total_size) AS total_size
+FROM timescaledb_information.hypertables h
+LEFT JOIN chunk_sizes cs 
+    ON h.hypertable_name = cs.hypertable_name;
+
+
+-- List individual chunks with sizes, hypertablename, & current compression status, & range start/end
+WITH chunk_info AS (
+    SELECT 
+        c.chunk_name AS original_chunk_name,  -- The uncompressed chunk name
+        h.hypertable_name,
+        c.is_compressed,
+        c.range_start, 
+        c.range_end,
+        cc.table_name AS compressed_chunk_name -- The actual compressed chunk name
+    FROM timescaledb_information.chunks c
+    JOIN timescaledb_information.hypertables h 
+        ON c.hypertable_name = h.hypertable_name
+    LEFT JOIN _timescaledb_catalog.chunk uc -- Join to find the compressed_chunk_id
+        ON c.chunk_name = uc.table_name
+    LEFT JOIN _timescaledb_catalog.chunk cc -- Join to get the compressed chunk name
+        ON uc.compressed_chunk_id = cc.id
+)
+SELECT 
+    ci.original_chunk_name,  -- This now explicitly shows the uncompressed chunk name
+    CASE 
+        WHEN ci.is_compressed THEN ci.compressed_chunk_name
+        ELSE ci.original_chunk_name
+    END AS chunk_name,
+    ci.hypertable_name, 
+    pg_size_pretty(pg_total_relation_size(format('%I.%I', '_timescaledb_internal', 
+        CASE 
+            WHEN ci.is_compressed THEN ci.compressed_chunk_name
+            ELSE ci.original_chunk_name
+        END)::regclass)) AS chunk_size,
+    CASE 
+        WHEN ci.is_compressed THEN 'Compressed'
+        ELSE 'Uncompressed'
+    END AS compression_status,
+    ci.range_start,
+    ci.range_end
+FROM chunk_info ci
+ORDER BY 
+    CASE 
+        WHEN ci.is_compressed THEN ci.compressed_chunk_name
+        ELSE ci.original_chunk_name
+    END;
+
+
+
+
+
+
+
+
+
+

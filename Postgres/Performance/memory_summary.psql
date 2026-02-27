@@ -1,0 +1,36 @@
+DO $$ 
+DECLARE 
+    total_memory_kb BIGINT;
+    shared_buffers_kb BIGINT;
+    work_mem_kb BIGINT;
+    temp_usage_mb BIGINT;
+    warning TEXT;
+BEGIN 
+    -- Total Memory Used by PostgreSQL
+    SELECT SUM(pg_database_size(datname)) / 1024 INTO total_memory_kb FROM pg_database;
+    
+    -- Shared Buffers
+    SELECT setting::bigint * 8 INTO shared_buffers_kb FROM pg_settings WHERE name = 'shared_buffers';
+
+    -- Work Memory
+    SELECT setting::bigint INTO work_mem_kb FROM pg_settings WHERE name = 'work_mem';
+
+    -- Temp File Usage
+    SELECT SUM(temp_bytes) / 1024 / 1024 INTO temp_usage_mb FROM pg_stat_database;
+
+    -- Determine if there is a possible memory issue
+    IF total_memory_kb > shared_buffers_kb * 2 THEN 
+        warning := 'High memory usage detected!';
+    ELSIF temp_usage_mb > 1024 THEN 
+        warning := 'Excessive temp file usage, consider increasing work_mem!';
+    ELSE 
+        warning := 'Memory usage is within normal limits';
+    END IF;
+
+    -- Output results
+    RAISE NOTICE 'Total Memory Used: % MB', total_memory_kb / 1024;
+    RAISE NOTICE 'Shared Buffers: % MB', shared_buffers_kb / 1024;
+    RAISE NOTICE 'Work Memory: % MB', work_mem_kb / 1024;
+    RAISE NOTICE 'Temp File Usage: % MB', temp_usage_mb;
+    RAISE NOTICE 'Memory Diagnosis: %', warning;
+END $$;

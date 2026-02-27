@@ -1,0 +1,65 @@
+-- This cron job runs on all Trimark MTS Timescale databases
+-- It truncates & re-claims space on the Timescale internal history table, timescaledb_internal.bgw_job_stat_history
+-- Run this in defaultdb
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT datname
+    FROM pg_database
+    WHERE datistemplate = false
+      AND datallowconn
+      AND datname NOT IN ('postgres','defaultdb')
+  LOOP
+    -- 1) Run Timescale's built-in job-history retention policy in that DB daily @ 00:10 UTC
+    PERFORM cron.schedule_in_database(
+      format('ts_retention_job_history_%I', r.datname),         -- job name (unique per DB)
+      '10 0 * * *',                                             -- cron (minute hour day month dow) UTC
+      $SQL$
+      DO $do$
+      DECLARE jid int;
+      BEGIN
+        SELECT job_id INTO jid
+        FROM timescaledb_information.jobs
+        WHERE proc_name = 'policy_job_stat_history_retention'
+        ORDER BY job_id LIMIT 1;
+
+        IF jid IS NOT NULL THEN
+          CALL run_job(jid);
+        END IF;
+      END
+      $do$;
+      $SQL$,
+      r.datname                                                  -- target database to execute in
+    );
+
+    -- 2) Run your VACUUM/cleanup job daily @ 00:20 UTC
+    --    Replace proc_name below if your UDF job uses a different name
+    PERFORM cron.schedule_in_database(
+      format('ts_vacuum_bgw_history_%I', r.datname),
+      '20 0 * * *',
+      $SQL$
+      DO $do$
+      DECLARE jid int;
+      BEGIN
+        SELECT job_id INTO jid
+        FROM timescaledb_information.jobs
+        WHERE proc_name = 'vacuum_bgw_history'
+        ORDER BY job_id LIMIT 1;
+
+        IF jid IS NOT NULL THEN
+          CALL run_job(jid);
+        END IF;
+      END
+      $do$;
+      $SQL$,
+      r.datname
+    );
+  END LOOP;
+END$$;
+
+-- See scheduled cron jobs
+SELECT jobid, jobname, schedule, database, command, active
+FROM cron.job
+ORDER BY jobname;

@@ -1,0 +1,47 @@
+DO $$ 
+DECLARE 
+    rec RECORD;
+    reindex_cmd TEXT;
+BEGIN
+    -- Create the log table if it doesn't exist
+    CREATE TABLE IF NOT EXISTS IndexReorganizeLog (
+        TableName TEXT,
+        IndexName TEXT,
+        BloatPercent NUMERIC,
+        StartDateTime TIMESTAMP,
+        EndDateTime TIMESTAMP,
+        ActionTaken TEXT  -- 'REINDEXED'
+    );
+
+    -- Loop through all bloated indexes >30% and execute reindex concurrently
+    FOR rec IN 
+        SELECT 
+            ps.relname AS TableName,
+            ps.indexrelname AS IndexName,
+            ROUND((1 - (ps.idx_scan / NULLIF(ps.idx_tup_read, 1))) * 100, 2) AS BloatPercent
+        FROM pg_stat_user_indexes ps
+        JOIN pg_indexes pi ON ps.indexrelname = pi.indexname
+        WHERE 
+            pi.schemaname = 'public'  -- Only public schema
+            AND ps.idx_scan > 0  -- Avoid unused indexes
+            AND (1 - (ps.idx_scan / NULLIF(ps.idx_tup_read, 1))) * 100 > 30  -- Bloat > 30%
+        ORDER BY BloatPercent DESC
+    LOOP
+        -- Generate the REINDEX CONCURRENTLY command
+        reindex_cmd := format('REINDEX CONCURRENTLY INDEX public.%I;', rec.IndexName);
+        
+        -- Log the start of reindexing
+        INSERT INTO IndexReorganizeLog (TableName, IndexName, BloatPercent, StartDateTime, ActionTaken)
+        VALUES (rec.TableName, rec.IndexName, rec.BloatPercent, NOW(), 'REINDEX STARTED');
+
+        -- Execute REINDEX CONCURRENTLY asynchronously using pg_background
+        PERFORM pg_background_launch(reindex_cmd);
+
+        -- Log the completion of reindexing
+        UPDATE IndexReorganizeLog
+        SET EndDateTime = NOW(), ActionTaken = 'REINDEXED'
+        WHERE TableName = rec.TableName AND IndexName = rec.IndexName AND StartDateTime IS NOT NULL;
+    END LOOP;
+
+    RAISE NOTICE 'Index reorganization process completed.';
+END $$;

@@ -1,0 +1,85 @@
+-- List all tables in this database & their sizes, owners, etc
+WITH rels AS (
+  SELECT c.oid,
+         n.nspname AS schema_name,
+         c.relname AS rel_name,
+         c.relkind
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+),
+ht AS (
+  SELECT schema_name, table_name
+  FROM _timescaledb_catalog.hypertable
+),
+ht_base AS (
+  SELECT r.schema_name,
+         r.rel_name AS hypertable_name,
+         pg_total_relation_size(format('%I.%I', r.schema_name, r.rel_name)::regclass) AS base_bytes
+  FROM rels r
+  JOIN ht  ON ht.schema_name = r.schema_name AND ht.table_name = r.rel_name
+),
+chunks AS (
+  SELECT h.schema_name,
+         h.table_name AS hypertable_name,
+         uc.table_name AS uncompressed_chunk,
+         cc.table_name AS compressed_chunk,
+         (cc.id IS NOT NULL) AS is_compressed
+  FROM _timescaledb_catalog.chunk uc
+  JOIN _timescaledb_catalog.hypertable h ON h.id = uc.hypertable_id
+  LEFT JOIN _timescaledb_catalog.chunk cc ON uc.compressed_chunk_id = cc.id
+),
+chunk_sizes AS (
+  SELECT
+    schema_name,
+    hypertable_name,
+    COUNT(*) FILTER (WHERE NOT is_compressed) AS uncompressed_chunk_count,
+    COUNT(*) FILTER (WHERE is_compressed)     AS compressed_chunk_count,
+    COALESCE(SUM(pg_total_relation_size(format('%I.%I','_timescaledb_internal', uncompressed_chunk)::regclass))
+             FILTER (WHERE NOT is_compressed), 0) AS uncompressed_bytes,
+    COALESCE(SUM(pg_total_relation_size(format('%I.%I','_timescaledb_internal', compressed_chunk)::regclass))
+             FILTER (WHERE is_compressed), 0)     AS compressed_bytes
+  FROM chunks
+  GROUP BY schema_name, hypertable_name
+),
+hypertable_totals AS (
+  SELECT
+    b.schema_name,
+    b.hypertable_name AS rel_name,
+    TRUE  AS is_hypertable,
+    ROUND((b.base_bytes
+          + COALESCE(cs.uncompressed_bytes,0)
+          + COALESCE(cs.compressed_bytes,0)) / 1024.0 / 1024 / 1024, 3) AS total_size_gb,
+    ROUND(b.base_bytes / 1024.0 / 1024 / 1024, 3)                      AS table_and_metadata_gb,
+    ROUND(COALESCE(cs.uncompressed_bytes,0) / 1024.0 / 1024 / 1024, 3) AS uncompressed_chunks_gb,
+    ROUND(COALESCE(cs.compressed_bytes,0)   / 1024.0 / 1024 / 1024, 3) AS compressed_chunks_gb,
+    COALESCE(cs.uncompressed_chunk_count,0) AS uncompressed_chunk_count,
+    COALESCE(cs.compressed_chunk_count,0)   AS compressed_chunk_count
+  FROM ht_base b
+  LEFT JOIN chunk_sizes cs
+    ON cs.schema_name = b.schema_name AND cs.hypertable_name = b.hypertable_name
+),
+regulars AS (
+  SELECT
+    r.schema_name,
+    r.rel_name,
+    FALSE AS is_hypertable,
+    ROUND(pg_total_relation_size(r.oid) / 1024.0 / 1024 / 1024, 3) AS total_size_gb,
+    ROUND(pg_total_relation_size(r.oid) / 1024.0 / 1024 / 1024, 3) AS table_and_metadata_gb,
+    0::numeric AS uncompressed_chunks_gb,
+    0::numeric AS compressed_chunks_gb,
+    0::bigint  AS uncompressed_chunk_count,
+    0::bigint  AS compressed_chunk_count
+  FROM rels r
+  LEFT JOIN ht ON ht.schema_name = r.schema_name AND ht.table_name = r.rel_name
+  WHERE ht.table_name IS NULL
+    AND r.relkind IN ('r','m')
+)
+SELECT *
+FROM (
+  SELECT * FROM hypertable_totals
+  UNION ALL
+  SELECT * FROM regulars
+) q
+ORDER BY total_size_gb DESC, schema_name, rel_name
+LIMIT 100;

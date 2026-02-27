@@ -1,0 +1,39 @@
+--pg total mem usage
+SELECT
+    datname AS database,
+    numbackends AS active_connections,
+    blks_read * 8 / 1024 AS disk_read_mb,
+    blks_hit * 8 / 1024 AS cache_hit_mb
+FROM pg_stat_database
+ORDER BY disk_read_mb DESC;
+
+--shared buffer usage
+SELECT
+    checkpoints_timed,
+    checkpoints_req,
+    buffers_checkpoint,
+    buffers_clean,
+    buffers_backend
+FROM pg_stat_bgwriter;
+
+--working mem & temp file usage
+SELECT
+    datname AS database,
+    temp_files,
+    temp_bytes / 1024 / 1024 AS temp_usage_mb
+FROM pg_stat_database
+ORDER BY temp_usage_mb DESC;
+
+--identify queries with high mem usage
+SELECT
+    pid,
+    age(clock_timestamp(), query_start) AS runtime,
+    state,
+    substring(query, 1, 100) AS short_query,
+    temp_blks_written,
+    temp_blks_read
+FROM pg_stat_activity
+WHERE state != 'idle'
+ORDER BY runtime DESC
+LIMIT 10;
+

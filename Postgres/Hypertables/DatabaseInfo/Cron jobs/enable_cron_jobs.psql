@@ -1,0 +1,2 @@
+-- Run this in defaultdb
+CREATE EXTENSION IF NOT EXISTS pg_cron;

@@ -1,0 +1,34 @@
+--top waits
+SELECT wait_event_type, wait_event, count(*) AS wait_count
+FROM pg_stat_activity
+WHERE wait_event IS NOT NULL
+GROUP BY wait_event_type, wait_event
+ORDER BY wait_count DESC
+LIMIT 100;
+
+--total waits by type (background waits filtered out)
+SELECT wait_event_type, wait_event, count(*) AS occurrences
+FROM pg_stat_activity
+WHERE wait_event IS NOT NULL
+AND wait_event NOT IN (
+   'ClientRead', 'ClientWrite', 'Extension', 'LWLock', 
+   'Lock', 'TransactionIdLock', 'TupleLock', 'WALWrite'
+)
+GROUP BY wait_event_type, wait_event
+ORDER BY occurrences DESC;
+
+--more detailed breakdown of waits
+WITH wait_stats AS (
+    SELECT wait_event_type, wait_event, count(*) AS occurrences
+    FROM pg_stat_activity
+    WHERE wait_event IS NOT NULL
+    GROUP BY wait_event_type, wait_event
+)
+SELECT wait_event_type,
+       wait_event,
+       occurrences,
+       100.0 * occurrences / SUM(occurrences) OVER () AS percent_total_waits
+FROM wait_stats
+ORDER BY occurrences DESC
+LIMIT 10;
+

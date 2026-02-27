@@ -1,0 +1,30 @@
+--when was each database last backed up?
+WITH backup_info AS (
+    SELECT 
+        last_archived_wal,
+        last_archived_time
+    FROM pg_stat_archiver
+),
+wal_info AS (
+    SELECT 
+        pg_wal_lsn_diff(pg_current_wal_lsn(), redo_lsn) AS total_wal_size_bytes
+    FROM pg_control_checkpoint()
+),
+database_sizes AS (
+    SELECT 
+        d.datname AS database_name,
+        pg_database_size(d.datname) AS raw_size_bytes,
+        pg_size_pretty(pg_database_size(d.datname)) AS formatted_size
+    FROM pg_database d
+    WHERE d.datname NOT IN ('template0', 'template1')
+)
+SELECT 
+    db.database_name,
+    db.formatted_size AS database_size,
+    b.last_archived_wal AS last_wal_file,
+    b.last_archived_time AS last_backup_time,
+    pg_size_pretty(w.total_wal_size_bytes) AS wal_size
+FROM database_sizes db
+LEFT JOIN backup_info b ON TRUE
+LEFT JOIN wal_info w ON TRUE
+ORDER BY db.raw_size_bytes DESC;  -- Ordering by raw size instead of formatted size

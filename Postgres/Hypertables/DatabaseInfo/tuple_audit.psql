@@ -1,0 +1,16 @@
+--List of tables & whether or not they need vacuuming
+SELECT
+    schemaname,
+    relname AS table_name,
+    n_dead_tup AS dead_tuples,
+    n_live_tup AS live_tuples,
+    pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
+    CASE 
+        WHEN n_dead_tup = 0 THEN 'No vacuum needed'
+        WHEN n_dead_tup > 100000 THEN 'High priority for vacuum'
+        WHEN n_dead_tup > 10000 THEN 'Medium priority for vacuum'
+        ELSE 'Low priority for vacuum'
+    END AS vacuum_priority
+FROM pg_stat_user_tables
+WHERE schemaname = 'public'
+ORDER BY dead_tuples DESC;

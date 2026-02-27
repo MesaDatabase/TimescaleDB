@@ -1,0 +1,44 @@
+--check if schedulers are waiting on cpu
+SELECT pid, state, wait_event_type, wait_event 
+FROM pg_stat_activity 
+WHERE state = 'active';
+
+--cpu usage per process
+SELECT pid, usename, application_name, state, query, 
+       now() - query_start AS runtime
+FROM pg_stat_activity
+WHERE state <> 'idle'
+ORDER BY runtime DESC;
+
+--cpu pressure thru wait events
+SELECT wait_event_type, wait_event, count(*)
+FROM pg_stat_activity
+WHERE wait_event IS NOT NULL
+GROUP BY wait_event_type, wait_event
+ORDER BY count(*) DESC;
+
+
+--aggregate cpu of cached query plans
+SELECT total_exec_time AS total_cpu_time, 
+       calls AS total_execution_count,
+       query
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 50;
+
+--top 50 sql statements by avg cpu consumtion
+SELECT total_exec_time / NULLIF(calls, 0) AS avg_cpu_time, 
+       query
+FROM pg_stat_statements
+ORDER BY avg_cpu_time DESC
+LIMIT 50;
+
+--look for cpu-intensive operations
+SELECT query, calls, total_exec_time, 
+       shared_blks_hit, shared_blks_read, shared_blks_written
+FROM pg_stat_statements
+WHERE query LIKE '%JOIN%'
+   OR query LIKE '%SORT%'
+ORDER BY total_exec_time DESC
+LIMIT 50;
+

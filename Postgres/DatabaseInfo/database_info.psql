@@ -1,0 +1,21 @@
+--list of all databases on this server + their basic info
+SELECT 
+    d.datname AS database_name,
+    pg_size_pretty(pg_database_size(d.datname)) AS total_size,
+    d.datdba AS owner_id,
+    u.usename AS owner_name,
+    d.encoding,
+    d.datcollate AS collation,
+    d.datctype AS character_type,
+    d.datistemplate AS is_template,
+    d.datallowconn AS allow_connections,
+    d.datconnlimit AS connection_limit,
+    d.datfrozenxid AS frozen_xid,
+    d.datminmxid AS min_multixid,
+    d.dattablespace AS tablespace_id,
+    ts.spcname AS tablespace_name
+FROM pg_database d
+LEFT JOIN pg_tablespace ts ON d.dattablespace = ts.oid
+LEFT JOIN pg_user u ON d.datdba = u.usesysid
+WHERE d.datname NOT IN ('template0', 'template1')
+ORDER BY pg_database_size(d.datname) DESC;

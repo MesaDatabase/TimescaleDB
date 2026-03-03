@@ -1,0 +1,44 @@
+-- Script: 07_timescale_compression_overview.sql
+-- Purpose: Compression settings (segmentby/orderby) + compression progress by hypertable
+-- Safe in prod: YES (read-only)
+-- Requires: timescaledb extension (timescaledb_information.* views)
+
+-- Compression settings per hypertable (derived from compression_settings view)
+WITH settings AS (
+  SELECT
+    hypertable_schema,
+    hypertable_name,
+    string_agg(attname, ', ' ORDER BY segmentby_column_index)
+      FILTER (WHERE segmentby_column_index IS NOT NULL) AS segmentby,
+    string_agg(
+      attname
+      || CASE WHEN orderby_asc THEN ' ASC' ELSE ' DESC' END
+      || CASE WHEN orderby_nullsfirst THEN ' NULLS FIRST' ELSE ' NULLS LAST' END,
+      ', ' ORDER BY orderby_column_index
+    ) FILTER (WHERE orderby_column_index IS NOT NULL) AS orderby
+  FROM timescaledb_information.compression_settings
+  GROUP BY hypertable_schema, hypertable_name
+)
+SELECT
+  now() AS as_of,
+  hypertable_schema,
+  hypertable_name,
+  COALESCE(segmentby, '') AS segmentby,
+  COALESCE(orderby,   '') AS orderby
+FROM settings
+ORDER BY hypertable_schema, hypertable_name;
+
+-- Compression progress by hypertable (chunk counts)
+SELECT
+  now() AS as_of,
+  hypertable_schema,
+  hypertable_name,
+  COUNT(*) AS chunk_count,
+  COUNT(*) FILTER (WHERE is_compressed) AS compressed_chunks,
+  COUNT(*) FILTER (WHERE NOT is_compressed) AS uncompressed_chunks,
+  ROUND(100.0 * COUNT(*) FILTER (WHERE is_compressed) / NULLIF(COUNT(*), 0), 1) AS pct_chunks_compressed,
+  MIN(range_start) AS oldest_range_start,
+  MAX(range_end)   AS newest_range_end
+FROM timescaledb_information.chunks
+GROUP BY hypertable_schema, hypertable_name
+ORDER BY pct_chunks_compressed ASC, chunk_count DESC;

@@ -1,0 +1,159 @@
+-- Script: 03_top_queries_pg_stat_statements.sql
+-- Purpose: Top queries from pg_stat_statements in seconds
+-- Safe in prod: YES (read-only; creates TEMP table)
+-- Requires: pg_stat_statements extension + access (pg_read_all_stats recommended)
+
+DROP TABLE IF EXISTS tmp_pgss_top;
+CREATE TEMP TABLE tmp_pgss_top
+(
+  rank                 integer,
+  dbname               text,
+  username             text,
+  queryid              bigint,
+  calls                bigint,
+  total_s              double precision,
+  mean_s               double precision,
+  min_s                double precision,
+  max_s                double precision,
+  rows                 bigint,
+  shared_blks_hit      bigint,
+  shared_blks_read     bigint,
+  temp_blks_written    bigint,
+  query                text
+) ON COMMIT DROP;
+
+DO $$
+DECLARE
+  pgss_oid    oid;
+  pgss_schema text;
+  pgss_rel    text;
+
+  -- Expressions in milliseconds (as reported by pg_stat_statements)
+  total_expr_ms text;
+  mean_expr_ms  text;
+  min_expr_ms   text;
+  max_expr_ms   text;
+
+  has_pgss boolean;
+
+  has_total_exec boolean;
+  has_total_time boolean;
+  has_mean_exec  boolean;
+  has_mean_time  boolean;
+  has_min_exec   boolean;
+  has_min_time   boolean;
+  has_max_exec   boolean;
+  has_max_time   boolean;
+BEGIN
+  SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')
+  INTO has_pgss;
+
+  IF NOT has_pgss THEN
+    INSERT INTO tmp_pgss_top(rank, query)
+    VALUES (1, 'pg_stat_statements extension is not installed in this database.');
+    RETURN;
+  END IF;
+
+  -- Find the actual schema/oid where the view is installed (usually public)
+  SELECT c.oid, n.nspname
+  INTO pgss_oid, pgss_schema
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE c.relname = 'pg_stat_statements'
+    AND c.relkind IN ('v','m')
+  ORDER BY n.nspname
+  LIMIT 1;
+
+  IF pgss_oid IS NULL THEN
+    INSERT INTO tmp_pgss_top(rank, query)
+    VALUES (1, 'pg_stat_statements relation not found (extension may be installed in a different schema or not visible).');
+    RETURN;
+  END IF;
+
+  pgss_rel := format('%I.%I', pgss_schema, 'pg_stat_statements');
+
+  -- Detect available timing columns on the relation
+  SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = pgss_oid AND attname='total_exec_time' AND NOT attisdropped)
+    INTO has_total_exec;
+  SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = pgss_oid AND attname='total_time' AND NOT attisdropped)
+    INTO has_total_time;
+
+  SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = pgss_oid AND attname='mean_exec_time' AND NOT attisdropped)
+    INTO has_mean_exec;
+  SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = pgss_oid AND attname='mean_time' AND NOT attisdropped)
+    INTO has_mean_time;
+
+  SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = pgss_oid AND attname='min_exec_time' AND NOT attisdropped)
+    INTO has_min_exec;
+  SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = pgss_oid AND attname='min_time' AND NOT attisdropped)
+    INTO has_min_time;
+
+  SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = pgss_oid AND attname='max_exec_time' AND NOT attisdropped)
+    INTO has_max_exec;
+  SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = pgss_oid AND attname='max_time' AND NOT attisdropped)
+    INTO has_max_time;
+
+  -- Build ms expressions
+  IF has_total_exec THEN
+    total_expr_ms := 's.total_exec_time';
+  ELSIF has_total_time THEN
+    total_expr_ms := 's.total_time';
+  ELSE
+    total_expr_ms := 'NULL::double precision';
+  END IF;
+
+  IF has_mean_exec THEN
+    mean_expr_ms := 's.mean_exec_time';
+  ELSIF has_mean_time THEN
+    mean_expr_ms := 's.mean_time';
+  ELSE
+    mean_expr_ms := format('(%s / NULLIF(s.calls,0))', total_expr_ms);
+  END IF;
+
+  IF has_min_exec THEN
+    min_expr_ms := 's.min_exec_time';
+  ELSIF has_min_time THEN
+    min_expr_ms := 's.min_time';
+  ELSE
+    min_expr_ms := 'NULL::double precision';
+  END IF;
+
+  IF has_max_exec THEN
+    max_expr_ms := 's.max_exec_time';
+  ELSIF has_max_time THEN
+    max_expr_ms := 's.max_time';
+  ELSE
+    max_expr_ms := 'NULL::double precision';
+  END IF;
+
+  -- Insert results converting ms -> seconds
+  EXECUTE format($sql$
+    INSERT INTO tmp_pgss_top
+    SELECT
+      row_number() OVER (ORDER BY %1$s DESC NULLS LAST) AS rank,
+      d.datname AS dbname,
+      r.rolname AS username,
+      s.queryid,
+      s.calls,
+      (%1$s / 1000.0) AS total_s,
+      (%2$s / 1000.0) AS mean_s,
+      (%3$s / 1000.0) AS min_s,
+      (%4$s / 1000.0) AS max_s,
+      s.rows,
+      s.shared_blks_hit,
+      s.shared_blks_read,
+      s.temp_blks_written,
+      left(regexp_replace(s.query, '\s+', ' ', 'g'), 2000) AS query
+    FROM %5$s s
+    JOIN pg_database d ON d.oid = s.dbid
+    JOIN pg_roles r    ON r.oid = s.userid
+    WHERE d.datname NOT IN ('template0','template1')
+    ORDER BY %1$s DESC NULLS LAST
+    LIMIT 50
+  $sql$, total_expr_ms, mean_expr_ms, min_expr_ms, max_expr_ms, pgss_rel);
+
+END $$;
+
+SELECT *
+FROM tmp_pgss_top
+ORDER BY rank;
